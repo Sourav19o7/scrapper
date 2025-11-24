@@ -25,7 +25,7 @@ export class InstagramScraper {
   async initBrowser() {
     if (!this.browser) {
       const launchOptions = {
-        headless: false, // Use headed mode to avoid detection
+        headless: 'new', // Use new headless mode
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',

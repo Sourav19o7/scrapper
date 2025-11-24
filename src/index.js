@@ -73,6 +73,12 @@ export class PersonaScraper {
         await organizer.saveJSON(platform, `${platform}_data.json`, data);
         await organizer.saveRaw(platform, 'raw_data.json', data);
 
+        // Save individual transcript files for YouTube
+        if (platform === 'youtube' && data.videos) {
+          logger.info('Saving individual transcript files...');
+          await organizer.saveTranscripts(data.videos);
+        }
+
         // Extract metadata
         metadata.platforms[platform] = {
           handle,

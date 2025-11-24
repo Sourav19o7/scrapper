@@ -165,44 +165,198 @@ ${cleanText}
   }
 
   /**
-   * Export dataset in ML-friendly format
+   * Export dataset in ML-friendly format optimized for AI persona training
    */
   async exportForTraining() {
     const trainingData = {
       persona: this.personaName,
       exportedAt: new Date().toISOString(),
-      content: [],
+      version: '2.0',
+      conversations: [], // For conversational AI training
+      monologues: [], // For long-form content like YouTube transcripts
+      metadata: {
+        totalSamples: 0,
+        platforms: {},
+        statistics: {},
+      },
     };
 
-    // Aggregate all text content
-    const platforms = ['youtube', 'instagram', 'twitter'];
-    for (const platform of platforms) {
-      try {
-        const platformDir = path.join(this.baseDir, platform);
-        const files = await fs.readdir(platformDir);
+    // Load YouTube data
+    try {
+      const youtubeData = await this.loadJSON('youtube', 'youtube_data.json');
+      if (youtubeData && youtubeData.videos) {
+        logger.info(`Processing ${youtubeData.videos.length} YouTube videos for training dataset`);
 
-        for (const file of files) {
-          if (file.endsWith('.json')) {
-            const data = await this.loadJSON(platform, file);
-            if (data) {
-              trainingData.content.push({
-                platform,
-                source: file,
-                data,
+        for (const video of youtubeData.videos) {
+          if (video.transcript && video.transcript.fullText) {
+            // Create monologue entry for each video
+            trainingData.monologues.push({
+              id: video.videoId,
+              platform: 'youtube',
+              type: 'video_transcript',
+              title: video.title,
+              text: video.transcript.fullText,
+              metadata: {
+                publishedAt: video.publishedAt,
+                duration: video.duration,
+                viewCount: video.statistics?.viewCount,
+                likeCount: video.statistics?.likeCount,
+                tags: video.tags || [],
+                description: video.description,
+              },
+              wordCount: video.transcript.fullText.split(/\s+/).length,
+              segmentCount: video.transcript.segmentCount,
+            });
+          }
+
+          // Process comments as conversational data
+          if (video.comments && video.comments.length > 0) {
+            for (const comment of video.comments) {
+              trainingData.conversations.push({
+                platform: 'youtube',
+                type: 'comment',
+                context: video.title,
+                text: comment.text,
+                author: comment.author,
+                metadata: {
+                  videoId: video.videoId,
+                  likeCount: comment.likeCount,
+                  publishedAt: comment.publishedAt,
+                },
               });
             }
           }
         }
-      } catch (error) {
-        logger.warn(`Could not export ${platform} data: ${error.message}`);
+
+        trainingData.metadata.platforms.youtube = {
+          videosProcessed: youtubeData.videos.length,
+          transcriptsExtracted: trainingData.monologues.filter(m => m.platform === 'youtube').length,
+          channelInfo: {
+            title: youtubeData.channel?.title,
+            subscriberCount: youtubeData.channel?.statistics?.subscriberCount,
+            videoCount: youtubeData.channel?.statistics?.videoCount,
+          },
+        };
       }
+    } catch (error) {
+      logger.warn(`Could not process YouTube data: ${error.message}`);
     }
+
+    // Load Instagram data
+    try {
+      const instagramData = await this.loadJSON('instagram', 'instagram_data.json');
+      if (instagramData && instagramData.posts) {
+        logger.info(`Processing ${instagramData.posts.length} Instagram posts for training dataset`);
+
+        for (const post of instagramData.posts) {
+          if (post.details && post.details.caption) {
+            trainingData.monologues.push({
+              id: post.shortcode,
+              platform: 'instagram',
+              type: 'post_caption',
+              text: post.details.caption,
+              metadata: {
+                url: post.url,
+                description: post.details.description,
+              },
+              wordCount: post.details.caption.split(/\s+/).length,
+            });
+          }
+        }
+
+        trainingData.metadata.platforms.instagram = {
+          postsProcessed: instagramData.posts.length,
+          captionsExtracted: trainingData.monologues.filter(m => m.platform === 'instagram').length,
+        };
+      }
+    } catch (error) {
+      logger.warn(`Could not process Instagram data: ${error.message}`);
+    }
+
+    // Load Twitter data
+    try {
+      const twitterData = await this.loadJSON('twitter', 'twitter_data.json');
+      if (twitterData && twitterData.tweets) {
+        logger.info(`Processing ${twitterData.tweets.length} tweets for training dataset`);
+
+        for (const tweet of twitterData.tweets) {
+          trainingData.conversations.push({
+            platform: 'twitter',
+            type: 'tweet',
+            text: tweet.text,
+            metadata: {
+              tweetId: tweet.id,
+              createdAt: tweet.created_at,
+              likeCount: tweet.public_metrics?.like_count,
+              retweetCount: tweet.public_metrics?.retweet_count,
+              replyCount: tweet.public_metrics?.reply_count,
+            },
+          });
+        }
+
+        trainingData.metadata.platforms.twitter = {
+          tweetsProcessed: twitterData.tweets.length,
+        };
+      }
+    } catch (error) {
+      logger.warn(`Could not process Twitter data: ${error.message}`);
+    }
+
+    // Calculate statistics
+    trainingData.metadata.totalSamples = trainingData.conversations.length + trainingData.monologues.length;
+    trainingData.metadata.statistics = {
+      totalConversations: trainingData.conversations.length,
+      totalMonologues: trainingData.monologues.length,
+      totalWords: trainingData.monologues.reduce((sum, m) => sum + (m.wordCount || 0), 0),
+      averageWordsPerMonologue: trainingData.monologues.length > 0
+        ? Math.round(trainingData.monologues.reduce((sum, m) => sum + (m.wordCount || 0), 0) / trainingData.monologues.length)
+        : 0,
+    };
 
     const exportPath = path.join(this.baseDir, 'training_dataset.json');
     await fs.writeFile(exportPath, JSON.stringify(trainingData, null, 2), 'utf-8');
     logger.info(`Exported training dataset to ${exportPath}`);
+    logger.info(`Dataset contains ${trainingData.metadata.totalSamples} samples (${trainingData.monologues.length} monologues, ${trainingData.conversations.length} conversations)`);
+
+    // Also export simplified formats
+    await this.exportSimplifiedFormats(trainingData);
 
     return exportPath;
+  }
+
+  /**
+   * Export simplified formats for different AI training frameworks
+   */
+  async exportSimplifiedFormats(trainingData) {
+    // Format 1: Plain text corpus (for fine-tuning language models)
+    const plainTextPath = path.join(this.baseDir, 'training_corpus.txt');
+    const textCorpus = trainingData.monologues
+      .map(m => `### ${m.title || m.type}\n\n${m.text}\n\n`)
+      .join('\n---\n\n');
+    await fs.writeFile(plainTextPath, textCorpus, 'utf-8');
+    logger.info(`Exported plain text corpus to ${plainTextPath}`);
+
+    // Format 2: JSONL format (for frameworks like OpenAI fine-tuning)
+    const jsonlPath = path.join(this.baseDir, 'training_dataset.jsonl');
+    const jsonlLines = trainingData.monologues.map(m =>
+      JSON.stringify({
+        prompt: `Speaking as ${trainingData.persona} about "${m.title || m.type}":`,
+        completion: m.text,
+      })
+    );
+    await fs.writeFile(jsonlPath, jsonlLines.join('\n'), 'utf-8');
+    logger.info(`Exported JSONL format to ${jsonlPath}`);
+
+    // Format 3: Conversational pairs (for chat model fine-tuning)
+    const conversationalPath = path.join(this.baseDir, 'training_conversations.json');
+    const conversationalData = trainingData.conversations.map(c => ({
+      role: 'assistant',
+      content: c.text,
+      context: c.context,
+      platform: c.platform,
+    }));
+    await fs.writeFile(conversationalPath, JSON.stringify(conversationalData, null, 2), 'utf-8');
+    logger.info(`Exported conversational format to ${conversationalPath}`);
   }
 }
 
