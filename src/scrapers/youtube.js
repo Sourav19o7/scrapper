@@ -1,5 +1,6 @@
 import { google } from 'googleapis';
 import axios from 'axios';
+import { YoutubeTranscript } from 'youtube-transcript-plus';
 import config from '../config/config.js';
 import logger from '../utils/logger.js';
 import RateLimiter from '../utils/rateLimiter.js';
@@ -249,16 +250,78 @@ export class YouTubeScraper {
   }
 
   /**
-   * Get video transcript/captions (requires additional API or library)
-   * This is a placeholder - you may want to use youtube-transcript library
+   * Get video transcript/captions using youtube-transcript library
    */
   async getTranscript(videoId) {
-    logger.warn('Transcript fetching requires additional setup. Consider using youtube-transcript npm package.');
-    // Placeholder for transcript functionality
-    return {
-      videoId,
-      transcript: 'Transcript fetching not implemented. Use youtube-transcript package.',
-    };
+    try {
+      const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId);
+
+      // Combine all transcript segments into full text
+      const fullText = transcriptItems
+        .map(item => item.text)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      return {
+        videoId,
+        segments: transcriptItems, // Individual segments with timestamps
+        fullText: fullText, // Combined text for training
+        duration: transcriptItems.length > 0
+          ? transcriptItems[transcriptItems.length - 1].offset + transcriptItems[transcriptItems.length - 1].duration
+          : 0,
+        segmentCount: transcriptItems.length,
+      };
+    } catch (error) {
+      logger.warn(`Could not fetch transcript for video ${videoId}: ${error.message}`);
+      return {
+        videoId,
+        segments: [],
+        fullText: null,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Get transcripts for multiple videos
+   */
+  async getTranscripts(videoIds, onProgress = null) {
+    const transcripts = [];
+    let successCount = 0;
+    let failCount = 0;
+
+    for (let i = 0; i < videoIds.length; i++) {
+      const videoId = videoIds[i];
+
+      // Rate limit to avoid being blocked
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      const transcript = await this.getTranscript(videoId);
+      transcripts.push(transcript);
+
+      if (transcript.fullText) {
+        successCount++;
+      } else {
+        failCount++;
+      }
+
+      if (onProgress) {
+        onProgress({
+          current: i + 1,
+          total: videoIds.length,
+          videoId,
+          success: !!transcript.fullText,
+        });
+      }
+
+      if ((i + 1) % 10 === 0) {
+        logger.info(`Transcript progress: ${i + 1}/${videoIds.length} (${successCount} success, ${failCount} failed)`);
+      }
+    }
+
+    logger.info(`Transcripts completed: ${successCount}/${videoIds.length} successful`);
+    return transcripts;
   }
 
   /**
@@ -289,11 +352,29 @@ export class YouTubeScraper {
         }
       }
 
+      // Fetch transcripts for videos (default: enabled)
+      let transcripts = [];
+      if (options.includeTranscripts !== false) {
+        logger.info(`Fetching transcripts for ${videos.length} videos...`);
+        const videoIds = videos.map(v => v.videoId);
+        transcripts = await this.getTranscripts(videoIds);
+
+        // Attach transcripts to videos
+        for (let i = 0; i < videos.length; i++) {
+          videos[i].transcript = transcripts[i];
+        }
+      }
+
       const result = {
         platform: 'youtube',
         scrapedAt: new Date().toISOString(),
         channel: channelInfo,
         videos: videos,
+        transcriptStats: {
+          total: transcripts.length,
+          successful: transcripts.filter(t => t.fullText).length,
+          failed: transcripts.filter(t => !t.fullText).length,
+        },
       };
 
       logger.info(`YouTube scrape completed: ${videos.length} videos collected`);

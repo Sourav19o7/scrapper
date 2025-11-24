@@ -112,6 +112,59 @@ export class DataOrganizer {
   }
 
   /**
+   * Save individual transcript files for each video
+   */
+  async saveTranscripts(videos) {
+    if (!videos || videos.length === 0) {
+      logger.warn('No videos provided for transcript extraction');
+      return [];
+    }
+
+    const savedFiles = [];
+    const transcriptsDir = path.join(this.baseDir, 'youtube', 'transcripts');
+
+    for (const video of videos) {
+      if (video.transcript && video.transcript.fullText) {
+        // Clean the transcript text (decode HTML entities)
+        const cleanText = video.transcript.fullText
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&#39;/g, "'")
+          .replace(/&quot;/g, '"')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        // Create a safe filename from video title
+        const safeTitle = video.title
+          .replace(/[^a-z0-9]/gi, '_')
+          .substring(0, 50)
+          .toLowerCase();
+        const filename = `${video.videoId}_${safeTitle}.txt`;
+        const filePath = path.join(transcriptsDir, filename);
+
+        // Write transcript file with metadata header
+        const content = `Video ID: ${video.videoId}
+Title: ${video.title}
+Published: ${video.publishedAt || 'Unknown'}
+Duration: ${video.duration || 'Unknown'}
+Segments: ${video.transcript.segmentCount || video.transcript.segments?.length || 0}
+
+---
+
+${cleanText}
+`;
+
+        await fs.writeFile(filePath, content, 'utf-8');
+        savedFiles.push(filename);
+      }
+    }
+
+    logger.info(`Saved ${savedFiles.length} transcript files to transcripts directory`);
+    return savedFiles;
+  }
+
+  /**
    * Export dataset in ML-friendly format
    */
   async exportForTraining() {

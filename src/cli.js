@@ -2,6 +2,8 @@
 
 import { Command } from 'commander';
 import PersonaScraper from './index.js';
+import DataOrganizer from './utils/dataOrganizer.js';
+import DatasetConverter from './utils/datasetConverter.js';
 import logger from './utils/logger.js';
 
 const program = new Command();
@@ -44,8 +46,33 @@ program
 
       const result = await scraper.scrapePlatform(options.platform, options.handle, scrapeOptions);
 
+      // Save data to the data folder
+      const organizer = new DataOrganizer(options.handle);
+      await organizer.initialize();
+
+      // Save the scraped data
+      await organizer.saveJSON(options.platform, `${options.platform}_data.json`, result);
+      await organizer.saveRaw(options.platform, 'raw_data.json', result);
+
+      // Save individual transcript files for YouTube
+      if (options.platform === 'youtube' && result.videos) {
+        await organizer.saveTranscripts(result.videos);
+      }
+
+      // Save metadata
+      const metadata = {
+        handle: options.handle,
+        platform: options.platform,
+        scrapedAt: result.scrapedAt || new Date().toISOString(),
+      };
+      await organizer.saveMetadata(metadata);
+
+      // Create summary
+      const summary = await organizer.createSummary();
+
       logger.info('\n✓ Scraping completed successfully!');
-      logger.info(`Data collected: ${JSON.stringify(result, null, 2).length} bytes`);
+      logger.info(`Data saved to: data/${organizer.sanitizeName(options.handle)}/`);
+      logger.info(`Files: ${summary.platforms[options.platform]?.files?.join(', ') || 'none'}`);
     } catch (error) {
       logger.error(`✗ Scraping failed: ${error.message}`);
       process.exit(1);
@@ -135,6 +162,53 @@ program
     console.log('   node src/cli.js scrape-persona -n "MKBHD" -y @mkbhd -i mkbhd -t mkbhd --deep\n');
 
     console.log('Note: Make sure to configure API keys in .env file before scraping.');
+  });
+
+// Convert scraped data to training dataset
+program
+  .command('convert')
+  .description('Convert scraped data to training dataset formats')
+  .requiredOption('-n, --name <name>', 'Persona name (folder name in data/)')
+  .option('-f, --format <format>', 'Output format: jsonl, alpaca, sharegpt, raw, all (default: all)')
+  .option('--system-prompt <prompt>', 'Custom system prompt for the persona')
+  .option('--max-length <number>', 'Maximum text length per entry', parseInt)
+  .action(async (options) => {
+    try {
+      logger.info(`Converting data for persona: ${options.name}`);
+
+      const converter = new DatasetConverter(options.name);
+      const format = options.format || 'all';
+
+      const convertOptions = {};
+      if (options.systemPrompt) convertOptions.systemPrompt = options.systemPrompt;
+      if (options.maxLength) convertOptions.maxLength = options.maxLength;
+
+      let results;
+      switch (format.toLowerCase()) {
+        case 'jsonl':
+          results = await converter.convertToJSONL(convertOptions);
+          break;
+        case 'alpaca':
+          results = await converter.convertToAlpaca(convertOptions);
+          break;
+        case 'sharegpt':
+          results = await converter.convertToShareGPT(convertOptions);
+          break;
+        case 'raw':
+          results = await converter.convertToRawText(convertOptions);
+          break;
+        case 'all':
+        default:
+          results = await converter.convertAll(convertOptions);
+          break;
+      }
+
+      logger.info('\n✓ Dataset conversion completed!');
+      logger.info(`Results: ${JSON.stringify(results, null, 2)}`);
+    } catch (error) {
+      logger.error(`✗ Conversion failed: ${error.message}`);
+      process.exit(1);
+    }
   });
 
 program.parse();

@@ -117,10 +117,32 @@ data/
 4. Add to `.env`
 
 ### Instagram
-Instagram scraping is challenging due to their restrictions. Options:
-- Use official Instagram Graph API (requires business account)
-- Use third-party libraries with caution
-- Manual export tools
+Instagram scraping is challenging due to their restrictions. **Important notes:**
+
+**Current Status**: Instagram now requires login for most content access, making automated scraping very difficult without authentication. The scraper will attempt to access public profiles, but may encounter login walls.
+
+**Recommended Options:**
+1. **Instagram Graph API** (Recommended for production):
+   - Requires Facebook Developer account
+   - Requires Instagram Business or Creator account
+   - Provides official, reliable access
+   - Setup: https://developers.facebook.com/docs/instagram-api/
+
+2. **Manual Methods**:
+   - Instagram's data download tool (Settings > Security > Download Data)
+   - Third-party tools with explicit user consent
+
+3. **Web Scraping** (Limited):
+   - May work for some public profiles
+   - Subject to frequent breakage
+   - May trigger bot detection
+   - Not recommended for production use
+
+**Known Issues:**
+- Instagram's anti-bot measures detect automated browsers
+- Content may require login even for public profiles
+- Frequent changes to page structure break selectors
+- Rate limiting and IP blocking for suspicious activity
 
 ## License
 

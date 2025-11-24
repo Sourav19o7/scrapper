@@ -24,10 +24,42 @@ export class InstagramScraper {
    */
   async initBrowser() {
     if (!this.browser) {
-      this.browser = await puppeteer.launch({
-        headless: 'new',
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      });
+      const launchOptions = {
+        headless: false, // Use headed mode to avoid detection
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--disable-blink-features=AutomationControlled',
+          '--disable-features=IsolateOrigins,site-per-process',
+        ],
+      };
+
+      // Try to use system Chrome on macOS if available
+      if (process.platform === 'darwin') {
+        const chromePaths = [
+          '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+          '/Applications/Chromium.app/Contents/MacOS/Chromium',
+        ];
+
+        for (const chromePath of chromePaths) {
+          try {
+            const fs = await import('fs');
+            if (fs.existsSync(chromePath)) {
+              launchOptions.executablePath = chromePath;
+              logger.info(`Using Chrome at: ${chromePath}`);
+              break;
+            }
+          } catch (e) {
+            // Continue to next path
+          }
+        }
+      }
+
+      this.browser = await puppeteer.launch(launchOptions);
       logger.info('Instagram browser initialized');
     }
     return this.browser;
@@ -54,15 +86,35 @@ export class InstagramScraper {
     try {
       logger.info(`Scraping Instagram profile: ${username}`);
 
-      // Set user agent
-      await page.setUserAgent(config.userAgent);
+      // Set a realistic user agent
+      await page.setUserAgent(
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      );
+
+      // Set extra headers to appear more like a real browser
+      await page.setExtraHTTPHeaders({
+        'accept-language': 'en-US,en;q=0.9',
+      });
+
+      // Mask automation detection
+      await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => false,
+        });
+      });
 
       // Navigate to profile
       const url = `https://www.instagram.com/${username}/`;
       await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
       // Wait for content to load
-      await page.waitForTimeout(2000);
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      // Check if we hit a login wall
+      const pageContent = await page.content();
+      if (pageContent.includes('Log in to Instagram') || pageContent.includes('loginForm')) {
+        logger.warn('Instagram is showing a login wall. Scraping may be limited.');
+      }
 
       // Extract profile data from page
       const profileData = await page.evaluate(() => {
@@ -122,11 +174,43 @@ export class InstagramScraper {
     try {
       logger.info(`Scraping Instagram posts for: ${username}`);
 
-      await page.setUserAgent(config.userAgent);
+      // Set a realistic user agent
+      await page.setUserAgent(
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      );
+
+      // Set extra headers
+      await page.setExtraHTTPHeaders({
+        'accept-language': 'en-US,en;q=0.9',
+      });
+
+      // Mask automation detection
+      await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => false,
+        });
+      });
+
       const url = `https://www.instagram.com/${username}/`;
       await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
-      await page.waitForTimeout(2000);
+      // Wait for content to load
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      // Debug: Check what's on the page
+      const debugInfo = await page.evaluate(() => {
+        const hasLoginForm = document.body.innerHTML.includes('Log in');
+        const linkCount = document.querySelectorAll('a[href*="/p/"], a[href*="/reel/"]').length;
+        const imgCount = document.querySelectorAll('img').length;
+        return { hasLoginForm, linkCount, imgCount };
+      });
+
+      logger.info(`Page debug info: ${JSON.stringify(debugInfo)}`);
+
+      if (debugInfo.hasLoginForm) {
+        logger.warn('Instagram is requiring login. Posts may not be accessible without authentication.');
+        logger.warn('Consider using the Instagram Graph API for production use.');
+      }
 
       // Scroll to load more posts
       const posts = [];
@@ -134,20 +218,32 @@ export class InstagramScraper {
       const maxScrolls = Math.ceil(limit / 12); // Instagram typically loads 12 posts at a time
 
       while (scrollCount < maxScrolls && posts.length < limit) {
-        // Extract posts from current view
+        // Extract posts from current view - updated selectors for current Instagram
         const newPosts = await page.evaluate(() => {
-          const articles = document.querySelectorAll('article a[href*="/p/"]');
           const postData = [];
 
-          articles.forEach((article) => {
-            const href = article.getAttribute('href');
-            const img = article.querySelector('img');
+          // Try multiple selector strategies as Instagram's structure varies
+          // Strategy 1: Look for all links containing /p/ or /reel/
+          const postLinks = document.querySelectorAll('a[href*="/p/"], a[href*="/reel/"]');
 
-            if (href && img) {
+          postLinks.forEach((link) => {
+            const href = link.getAttribute('href');
+            if (!href) return;
+
+            // Extract shortcode from URL
+            const match = href.match(/\/(p|reel)\/([^\/]+)/);
+            if (!match) return;
+
+            const shortcode = match[2];
+
+            // Find associated image
+            const img = link.querySelector('img');
+
+            if (img) {
               postData.push({
                 url: `https://www.instagram.com${href}`,
-                shortcode: href.split('/p/')[1]?.split('/')[0],
-                thumbnail: img.src,
+                shortcode: shortcode,
+                thumbnail: img.src || img.getAttribute('src'),
                 alt: img.alt || '',
               });
             }
@@ -163,12 +259,17 @@ export class InstagramScraper {
           }
         }
 
+        // If we found posts, log it
+        if (posts.length > 0) {
+          logger.info(`Loaded ${posts.length} posts so far...`);
+        } else {
+          logger.warn(`No posts found yet on scroll ${scrollCount + 1}`);
+        }
+
         // Scroll down
         await page.evaluate(() => window.scrollBy(0, window.innerHeight));
-        await page.waitForTimeout(2000);
+        await new Promise(resolve => setTimeout(resolve, 2000));
         scrollCount++;
-
-        logger.info(`Loaded ${posts.length} posts so far...`);
       }
 
       await page.close();
@@ -196,7 +297,7 @@ export class InstagramScraper {
       const url = `https://www.instagram.com/p/${shortcode}/`;
       await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
-      await page.waitForTimeout(2000);
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
       const postDetails = await page.evaluate(() => {
         const getMetaContent = (property) => {
