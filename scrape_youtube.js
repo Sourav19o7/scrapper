@@ -11,10 +11,12 @@ import logger from './src/utils/logger.js';
  */
 
 async function scrapeYouTubeChannel() {
-  // Configuration
-  const CHANNEL_HANDLE = '@financewithsharan'; // Change this to your target channel
+  // ========== CONFIGURATION ==========
+  // Change these values according to your needs
+
+  const CHANNEL_HANDLE = '@financewithsharan'; // YouTube channel handle (with @)
   const PERSONA_NAME = 'FinanceWithSharan'; // Name for the AI persona
-  const MAX_VIDEOS = 50; // Number of videos to scrape (set to null for all)
+  const MAX_VIDEOS = 100; // Number of videos to scrape (set to null for all available videos)
 
   logger.info('='.repeat(60));
   logger.info('YouTube Channel Scraper for AI Persona Training');
@@ -26,12 +28,13 @@ async function scrapeYouTubeChannel() {
   try {
     const scraper = new PersonaScraper();
 
-    // Scrape YouTube channel with transcripts
+    // Scrape YouTube channel with comprehensive data
     const options = {
       youtube: {
         maxVideos: MAX_VIDEOS,
-        includeComments: false, // Set to true if you want comments
-        includeTranscripts: true, // Always true for persona training
+        includeComments: false, // Set to true to include video comments (uses more API quota)
+        includeTranscripts: true, // MUST be true for persona training
+        saveTranscripts: true, // Save individual transcript files
       },
     };
 
@@ -63,18 +66,38 @@ async function scrapeYouTubeChannel() {
       logger.info(`- Total words in transcripts: ${totalWords.toLocaleString()}`);
     }
 
-    logger.info(`\n\nDataset Location:`);
-    logger.info(`- Main directory: ./data/${PERSONA_NAME.replace(/[^a-z0-9]/gi, '_').toLowerCase()}/`);
-    logger.info(`- Training dataset: ./data/${PERSONA_NAME.replace(/[^a-z0-9]/gi, '_').toLowerCase()}/training_dataset.json`);
-    logger.info(`- Plain text corpus: ./data/${PERSONA_NAME.replace(/[^a-z0-9]/gi, '_').toLowerCase()}/training_corpus.txt`);
-    logger.info(`- JSONL format: ./data/${PERSONA_NAME.replace(/[^a-z0-9]/gi, '_').toLowerCase()}/training_dataset.jsonl`);
-    logger.info(`- Individual transcripts: ./data/${PERSONA_NAME.replace(/[^a-z0-9]/gi, '_').toLowerCase()}/youtube/transcripts/`);
+    const dirName = PERSONA_NAME.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    logger.info(`\n\nDataset Location: ./data/${dirName}/`);
+    logger.info(`\nKey Files Generated:`);
+    logger.info(`\n1. PERSONA PROFILE (Understanding the person)`);
+    logger.info(`   - persona_profile.json    - Extracted ideology, beliefs, and financial philosophy`);
+    logger.info(`   - persona_profile.md      - Human-readable profile summary`);
+    logger.info(`\n2. TRAINING DATASETS (For AI model training)`);
+    logger.info(`   - training_dataset.json   - Complete dataset with posts, ideology, and metadata`);
+    logger.info(`   - training_corpus.txt     - Plain text format for simple fine-tuning`);
+    logger.info(`   - training_dataset.jsonl  - JSONL format for API-based training`);
+    logger.info(`   - training_conversations.json - Conversational format for chat models`);
+    logger.info(`\n3. RAW DATA (Original scraped data)`);
+    logger.info(`   - youtube/youtube_data.json - All video data with metadata`);
+    logger.info(`   - youtube/transcripts/      - Individual transcript files`);
+    logger.info(`   - raw/                      - Backup of raw data`);
+
+    logger.info(`\n\nWhat's in the Dataset:`);
+    logger.info(`✓ Posts - All video transcripts with full context`);
+    logger.info(`✓ Ideology - Core beliefs and worldview extracted from content`);
+    logger.info(`✓ Financial Philosophy - Investment advice, budgeting tips, risk management`);
+    logger.info(`✓ Decision Patterns - How they make and recommend financial decisions`);
+    logger.info(`✓ Values - What they consider important and prioritize`);
+    logger.info(`✓ Common Phrases - Signature expressions and speaking patterns`);
+    logger.info(`✓ Topic Expertise - Areas they discuss most frequently`);
 
     logger.info(`\n\nNext Steps:`);
-    logger.info(`1. Review the training dataset files in the data directory`);
-    logger.info(`2. Use the training_dataset.json for structured AI training`);
-    logger.info(`3. Use the training_corpus.txt for simple language model fine-tuning`);
-    logger.info(`4. Use the training_dataset.jsonl for OpenAI-style fine-tuning`);
+    logger.info(`1. Review persona_profile.md to understand the person's ideology`);
+    logger.info(`2. Check training_dataset.json for the complete structured dataset`);
+    logger.info(`3. Use appropriate format for your AI training framework:`);
+    logger.info(`   - GPT/LLaMA: Use training_corpus.txt or training_dataset.jsonl`);
+    logger.info(`   - Custom models: Use training_dataset.json with full metadata`);
+    logger.info(`   - Chat models: Use training_conversations.json`);
     logger.info(`\n${'='.repeat(60)}\n`);
 
   } catch (error) {
